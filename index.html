@@ -2,76 +2,57 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <script src="https://cdn.jsdelivr.net/npm/axios@1.6.7/dist/axios.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100;0,400;0,500;0,700;0,900;1,100;1,300;1,400;1,500;1,700;1,900&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Roboto:wght@100;400;500;700;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="src/style.css" />
 
-    <script src="https://unpkg.com/axios@1.6.7/dist/axios.min.js"></script>
-    <title>My weather application</title>
+    <link rel="stylesheet" href="src/style.css" />
+    <title>My Weather Application</title>
   </head>
   <body>
     <div class="weather-app">
       <header>
         <form id="search-form">
           <input
-            type="search"
             id="city-input"
-            placeholder="Enter a city.."
-            required
             class="search-input"
+            type="search"
+            placeholder="Enter a city…"
             required
           />
-          <input type="submit" value="Search" class="search-button" />
+          <button class="search-button" type="submit">Search</button>
         </form>
       </header>
+
       <main>
         <div class="current-weather">
           <div>
             <h1 class="current-city"></h1>
             <p class="current-details">
-              Observed at (local time)<br /><span id="formatted-day-time"></span
-              >,
-              <span id="current-description"></span>
-              <br />
+              <span id="observed-time"></span><br /><span
+                id="current-description"
+              ></span
+              ><br />
               Humidity: <strong id="current-humidity"></strong>, Wind:
               <strong id="current-wind-speed"></strong>
             </p>
           </div>
           <div class="current-temperature">
-            <img class="current-temperature-icon" alt="Weather Icon" />
-            <span class="current-temperature-value">24</span
+            <img class="current-temperature-icon" alt="" />
+            <span class="current-temperature-value">--</span
             ><span class="current-temperature-unit">°C</span>
           </div>
         </div>
+
+        <div id="forecast" class="weather-forecast"></div>
       </main>
-      <footer>
-        <p>
-          This project was coded by
-          <a href="https://github.com/mdp-medical-developer" target="_blank"
-            >Catherine An</a
-          >
-          and is
-          <a
-            href="https://github.com/mdp-medical-developer/developer-training"
-            target="/_blank"
-          >
-            on GitHub</a
-          >
-          and
-          <a
-            href="https://loquacious-centaur-616638.netlify.app/"
-            target="_blank"
-            >hosted on Netlify</a
-          >
-        </p>
-      </footer>
     </div>
+
     <script src="src/index.js"></script>
   </body>
 </html>

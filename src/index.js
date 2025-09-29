@@ -1,217 +1,182 @@
-// ========= DOM Refs =========
+// --- Config: SheCodes API ---
+const API_KEY = "bf84c5dt8ba6f1571of07a1c8e407cf3";
+const UNIT = "metric";
+const BASE_CURRENT = "https://api.shecodes.io/weather/v1/current";
+const BASE_FORECAST = "https://api.shecodes.io/weather/v1/forecast";
+
+// --- Config: TimeZoneDB (for city local time by coords) ---
+const TZDB_KEY = "ZSYV5RBNT2CW";
+const TZDB_URL = "https://api.timezonedb.com/v2.1/get-time-zone";
+
+// --- Select elements ---
 const els = {
-  dayTime: document.querySelector("#formatted-day-time"),
   city: document.querySelector(".current-city"),
   temp: document.querySelector(".current-temperature-value"),
   humidity: document.querySelector("#current-humidity"),
   wind: document.querySelector("#current-wind-speed"),
   desc: document.querySelector("#current-description"),
+  icon: document.querySelector(".current-temperature-icon"),
   form: document.querySelector("#search-form"),
   input: document.querySelector("#city-input"),
-  icon: document.querySelector(".current-temperature-icon"), // <img>
+  forecast: document.querySelector("#forecast"),
+  observed: document.querySelector("#observed-time"),
 };
 
-// ========= API Config =========
-const API_KEY = "bf84c5dt8ba6f1571of07a1c8e407cf3";
-const UNIT = "metric";
-const BASE = "https://api.shecodes.io/weather/v1/current";
+// Holds the current city's IANA timezone, e.g. "Europe/London"
+let currentTimeZone = null;
 
-// ========= TimeZoneDB Config =========
-const TZDB_KEY = "ZSYV5RBNT2CW"; // your key
-const TZDB_URL = "https://api.timezonedb.com/v2.1/get-time-zone";
-
-// ========= Clock State =========
-let baseUtcTime = null; // UTC timestamp from SheCodes (ms)
-let baseSystemTime = null; // system time when data was fetched
-let cityTimeZone = null; // IANA timezone (e.g. "Europe/London")
-let clockTimer = null;
-
-// ========= Small utilities =========
-const tzCache = new Map(); // key: "lat,lon" rounded -> IANA tz
-
-function roundCoord(n) {
-  return Math.round(n * 100) / 100; // ~1km precision; good for cities
-}
-
-function fetchWithTimeout(url, options = {}, timeoutMs = 6000) {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeoutMs);
-  return fetch(url, { ...options, signal: controller.signal }).finally(() =>
-    clearTimeout(id)
-  );
-}
-
-// ========= Timezone via TimeZoneDB (coords) =========
-async function resolveTimeZoneByCoords(lat, lon) {
-  if (typeof lat !== "number" || typeof lon !== "number") return null;
-
-  const key = `${roundCoord(lat)},${roundCoord(lon)}`;
-  if (tzCache.has(key)) return tzCache.get(key);
-
-  const url = `${TZDB_URL}?key=${encodeURIComponent(
-    TZDB_KEY
-  )}&format=json&by=position&lat=${lat}&lng=${lon}`;
-
-  try {
-    const res = await fetchWithTimeout(url, {}, 6000);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    // TimeZoneDB returns: { status: "OK", zoneName: "Europe/London", ... }
-    if (data?.status === "OK" && data?.zoneName) {
-      tzCache.set(key, data.zoneName);
-      return data.zoneName;
-    }
-    console.warn("TimeZoneDB unexpected payload:", data);
-    return null;
-  } catch (err) {
-    console.warn("TimeZoneDB error:", err);
-    return null;
+// --- Helpers ---
+function iconUrl(condition) {
+  if (condition && condition.icon_url) return condition.icon_url;
+  if (condition && condition.icon) {
+    return `https://shecodes-assets.s3.amazonaws.com/api/weather/icons/${condition.icon}.png`;
   }
+  return "";
 }
 
-// ========= Clock Rendering =========
-function updateClock() {
-  if (!baseUtcTime || !baseSystemTime) return;
-
-  // Advance from the UTC snapshot by elapsed real time
-  const elapsed = Date.now() - baseSystemTime;
-  const nowUtc = new Date(baseUtcTime + elapsed);
-
-  const opts = {
+function weekday(unix) {
+  const date = new Date(unix * 1000);
+  return date.toLocaleDateString(undefined, {
     weekday: "short",
-    day: "2-digit",
-    month: "short",
+    timeZone: currentTimeZone || undefined,
+  });
+}
+
+function formatObservedTime(unix) {
+  const date = new Date(unix * 1000);
+  return date.toLocaleString(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  };
+    timeZone: currentTimeZone || undefined,
+  });
+}
 
-  if (cityTimeZone) {
-    opts.timeZone = cityTimeZone; // render in the city's local time
+// Get IANA timezone from coordinates using TimeZoneDB
+async function getTimeZoneByCoords(lat, lon) {
+  const url = `${TZDB_URL}?key=${encodeURIComponent(
+    TZDB_KEY
+  )}&format=json&by=position&lat=${lat}&lng=${lon}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  // Expecting { status: "OK", zoneName: "Europe/London", ... }
+  if (data && data.status === "OK" && data.zoneName) {
+    return data.zoneName;
   }
-
-  els.dayTime.textContent = nowUtc.toLocaleString(undefined, opts);
+  return null; // if it fails, we'll just let the browser default apply
 }
 
-function startClock() {
-  if (clockTimer) clearInterval(clockTimer);
+// --- Render current weather ---
+function renderCurrent(data) {
+  els.city.textContent = data.city || "";
+  els.temp.textContent = Math.round(data.temperature.current);
+  els.humidity.textContent = data.temperature.humidity + "%";
+  els.wind.textContent = data.wind.speed.toFixed(1) + " km/h";
+  els.desc.textContent = data.condition.description || "";
+  els.icon.src = iconUrl(data.condition);
+  els.icon.alt = data.condition.description || "Weather icon";
 
-  // Render immediately
-  updateClock();
-
-  // Align to the next minute, then every minute
-  const msToNextMinute = 60000 - (Date.now() % 60000);
-  setTimeout(() => {
-    updateClock();
-    clockTimer = setInterval(updateClock, 60000);
-  }, msToNextMinute);
-}
-
-// ========= API Calls =========
-function getWeatherByCoords(lat, lon) {
-  const url = `${BASE}?lat=${lat}&lon=${lon}&key=${API_KEY}&unit=${UNIT}`;
-  axios.get(url).then(displayWeather).catch(showFallback);
-}
-
-function getWeatherByCity(city) {
-  const url = `${BASE}?query=${encodeURIComponent(
-    city
-  )}&key=${API_KEY}&unit=${UNIT}`;
-  axios.get(url).then(displayWeather).catch(showFallback);
-}
-
-// ========= Rendering =========
-async function displayWeather({ data }) {
-  console.log("🌦 Full API response:", data);
-
-  if (data?.status === "not_found") {
-    showFallback();
-    return;
+  if (els.observed) {
+    els.observed.textContent =
+      "Observed at: " + formatObservedTime(data.time) + " (Local Time)";
   }
-
-  // Basic weather info
-  els.city.textContent = data.city;
-  els.temp.textContent = Math.round(Number(data.temperature?.current ?? 0));
-  els.humidity.textContent = `${Number(data.temperature?.humidity ?? 0)}%`;
-  els.wind.textContent = `${Number(data.wind?.speed ?? 0).toFixed(1)} km/h`;
-  els.desc.textContent = data.condition?.description ?? "";
-
-  // Weather icon (<img>)
-  if (els.icon) {
-    const iconUrl =
-      data?.condition?.icon_url ||
-      (data?.condition?.icon
-        ? `https://shecodes-assets.s3.amazonaws.com/api/weather/icons/${data.condition.icon}.png`
-        : "");
-    els.icon.src = iconUrl;
-    els.icon.alt = data.condition?.description || "Weather icon";
-    els.icon.loading = "lazy";
-    els.icon.decoding = "async";
-  }
-
-  // Save SheCodes UTC snapshot (seconds -> ms)
-  baseUtcTime = Number(data.time) * 1000;
-  baseSystemTime = Date.now();
-
-  // Resolve timezone via TimeZoneDB using coordinates
-  const { latitude, longitude } = data?.coordinates || {};
-  cityTimeZone = await resolveTimeZoneByCoords(latitude, longitude);
-
-  // If TimeZoneDB failed (rare), fall back to browser local tz (omit timeZone)
-  console.log("🕐 Resolved timezone (TZDB):", cityTimeZone);
-
-  startClock();
 }
 
-function showFallback() {
-  els.city.textContent = "City not found";
-  els.temp.textContent = "--";
-  els.humidity.textContent = "--";
-  els.wind.textContent = "--";
-  els.desc.textContent = "--";
-  els.dayTime.textContent = "--";
+// --- Render 5-day forecast ---
+function renderForecast(data) {
+  const daily = (data.daily || []).slice(0, 5);
+  let html = "";
 
-  if (els.icon) {
-    els.icon.src = "";
-    els.icon.alt = "";
-  }
+  daily.forEach(function (day) {
+    const max = Math.round(day.temperature.maximum);
+    const min = Math.round(day.temperature.minimum);
+    const url = iconUrl(day.condition);
+    const alt = day.condition.description || "Weather icon";
 
-  baseUtcTime = null;
-  baseSystemTime = null;
-  cityTimeZone = null;
+    html += `
+      <div class="weather-forecast-day">
+        <div class="weather-forecast-date">${weekday(day.time)}</div>
+        <div class="weather-forecast-icon">
+          <img src="${url}" alt="${alt}" />
+        </div>
+        <div class="weather-forecast-temperature"><strong>${max}°</strong>${min}°</div>
+      </div>
+    `;
+  });
 
-  if (clockTimer) clearInterval(clockTimer);
+  els.forecast.innerHTML = html;
 }
 
-// ========= Search Handler =========
-function onSearch(e) {
+// --- Fetch weather + forecast by CITY and set timezone ---
+async function loadCity(city) {
+  const [current, forecast] = await Promise.all([
+    axios.get(
+      `${BASE_CURRENT}?query=${encodeURIComponent(
+        city
+      )}&key=${API_KEY}&unit=${UNIT}`
+    ),
+    axios.get(
+      `${BASE_FORECAST}?query=${encodeURIComponent(
+        city
+      )}&key=${API_KEY}&unit=${UNIT}`
+    ),
+  ]);
+
+  // Resolve timezone from coords
+  const coords = current.data && current.data.coordinates;
+  currentTimeZone = coords
+    ? await getTimeZoneByCoords(coords.latitude, coords.longitude)
+    : null;
+
+  renderCurrent(current.data);
+  renderForecast(forecast.data);
+}
+
+// --- Fetch weather + forecast by COORDS and set timezone ---
+async function loadByCoords(lat, lon) {
+  const [current, forecast] = await Promise.all([
+    axios.get(
+      `${BASE_CURRENT}?lat=${lat}&lon=${lon}&key=${API_KEY}&unit=${UNIT}`
+    ),
+    axios.get(
+      `${BASE_FORECAST}?lat=${lat}&lon=${lon}&key=${API_KEY}&unit=${UNIT}`
+    ),
+  ]);
+
+  // Resolve timezone from coords
+  currentTimeZone = await getTimeZoneByCoords(lat, lon);
+
+  renderCurrent(current.data);
+  renderForecast(forecast.data);
+}
+
+// --- Search event ---
+els.form.addEventListener("submit", function (e) {
   e.preventDefault();
-  const query = els.input.value.trim();
-  if (!query) return;
-  getWeatherByCity(query);
+  const city = els.input.value.trim();
+  if (city) {
+    loadCity(city);
+  }
   e.target.reset();
-}
-els.form.addEventListener("submit", onSearch);
+});
 
-// ========= Init =========
-function initDefaultCity() {
-  if (!("geolocation" in navigator)) {
-    getWeatherByCity("Paris");
-  } else {
+// --- Initial load: try geolocation first, else default to London ---
+function init() {
+  if ("geolocation" in navigator) {
     navigator.geolocation.getCurrentPosition(
-      ({ coords: { latitude, longitude } }) => {
-        getWeatherByCoords(latitude, longitude);
+      (pos) => {
+        loadByCoords(pos.coords.latitude, pos.coords.longitude);
       },
       () => {
-        getWeatherByCity("Paris");
-      },
-      {
-        enableHighAccuracy: false,
-        timeout: 8000,
-        maximumAge: 5 * 60 * 1000,
+        loadCity("London");
       }
     );
+  } else {
+    loadCity("London");
   }
 }
 
-initDefaultCity();
+init();
